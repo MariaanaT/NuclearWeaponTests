@@ -1,0 +1,735 @@
+---
+title: "Nuclear Weapon Tests Data Cleaning"
+author: "Mariaana Talus"
+date: "`r format(Sys.time(), '%d.%m.%Y')`" #today
+output: html_document 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Nuclear Weapon Tests - Data Cleaning 
+
+The goal is to present nuclear weapon test data on a map. But first, an extensive data cleaning is needed. 
+
+The dataset is an excellent example of a messy data; most of the events are presented in a single row, but sometimes with two rows. Also, the data set has some misspellings, and these need to be taken care of. Furthermore, sometimes one data cell is a combination of two categories  (e.g. Devise type), and these needs to be dealed with case by case. And finally, there are some clear errors in locations of the dataset that needs to be fixed. 
+
+Some of these corrections have been checked using Wikipedia, where lists of all nuclear tests can be found for each countries. See for example https://en.wikipedia.org/wiki/Nuclear_weapons_testing. 
+
+This document is concentrating on the data cleaning process. To see the actual plots see NuclearWeaponTests_Visualization.Rmd. 
+
+## Import libraries and set constants 
+
+Import libraries
+```{r import libraries, message=FALSE}
+#install.packages("plotly")  # needed only if plotly has not been installed already
+library(plotly) 
+#install.packages("dplyr")  # needed only if dplyr has not been installed already
+library(dplyr) 
+```
+
+Set some constants for the number of rows shown in tables.
+```{r set constants}
+ROWS = 30 # how many data rows are displayed 
+```
+
+## Reading in data
+
+Reading in data. Data is downloaded from http://nuclearweaponarchive.org/Library/Catalog, and it has been saved as nuclearweapondata.txt. Updated version can be found from https://www.batguano.com/nuclear/nuccatalog.html. 
+
+```{r read in data}
+dataRaw <- read.table("nuclearweapondata_orig.txt", 
+                      skip=284, #Comments before actual data 
+                      colClasses="character", 
+                      sep="\n", #Only rows can be separated at this point
+                      nrows=2486-284-1, #Comments after actual data
+                      stringsAsFactors=FALSE)
+
+colnames(dataRaw)<-"data" # give name for the column 
+```
+
+A glipse of messyness of data can be seen from the preview.
+
+```{r preview data}
+head(dataRaw, 20) 
+```
+
+Total number of datarows.
+
+```{r no datarows}
+nrow(dataRaw) 
+```
+
+The following data is presented in the file: 
+
+* Date of the test
+* Time of blast (Not studied)
+* Testing party
+* Test or explosion site
+* Test subsite
+* Test type
+* Seismic body (P) wave magnitude
+* Seismic surface wave magnitude (Not included)
+* Explosive Yield
+* Latitude
+* Longitude
+* Purpose
+* Device Type
+* Rock type for underground tests (Not included)
+* Is device above or below water table (Not studied)
+* Name of explosion
+* Generalized References (Not included)
+
+Not all of this data is studied in this work, and the ones not included are marked in the list above. 
+
+For more details see below, or the original datafile, which also acts as a documentation file.
+
+
+## Cleaning of the data
+
+Sometimes event is presented in two rows. The first row is removed, as the most interesting data is presented in the second row, and most of the events are desrcribed only in one row. The first row has only following additional information not relevant to this study:
+
+* Full name of test.
+* Depth of burial, or if negative, elevation.
+* Comments.
+
+First line is supposed to be marked with '#' according to documentation, but this is not the case most of the time. After some studies and experiments I found out that most these extra lines can be picked based on strings 'LLNL' and 'LANL'.
+
+```{r remove LLNL}
+#find lines with text 'LLNL' or 'LANL'
+double1 <- grepl("LLNL|LANL", dataRaw$data) 
+#remove those lines
+dataRaw <- as.data.frame(dataRaw[!double1,])
+```
+
+Some first lines are still left in the data. These appeared as additional data categories in the more detailed study of the data, but lets remove them right away. These can be removed based on the name of the test which is present both in 1st and 2nd rows. Then we remove only the first row only.
+
+```{r remove first lines}
+# Names of the tests where 1st line is to be removed
+doubleRowNames = "NEVA|OKA |VYATKA|SHEKSNA|KRISTALL|KRATON|KIMBERLI|GORIZONT"
+
+# find lines with names 
+double2 <- which(grepl(doubleRowNames, dataRaw$data)) 
+# remove first lines only, that is, leave the second lines untouched 
+dataRaw = as.data.frame(dataRaw[-c(double2[c(TRUE, FALSE)]),]) 
+```
+
+There is also a comment line within the data stating only "(above may be 720107)", let's remove this also.
+
+```{r remove comment line}
+double4 <- grepl("above may be", dataRaw$data) #find comment lines
+dataRaw <- as.data.frame(dataRaw[!double4,])
+```
+
+Number of datarows after cleaning.
+
+```{r no datarows 2}
+nrow(dataRaw) 
+```
+
+## Construct the data columns
+
+Currently, all the data is in one columm only. To break the data to distict columns, we need to use the information given in the documentation which explains where in this row the information is located. For example, the date is the first information given in the rows, described from first character in the row to sixth.
+
+### Date
+
+Date in form of yymmdd, where yy = year-1900, mm = month, dd = day of month. Date uses characters from 1st to 6th in the data row.
+
+```{r get date}
+Date <- substr(dataRaw$data,1,6) 
+Date <- as.Date(Date, "%y%m%d")
+# Correct date to previous century and set format 
+Date <- as.Date(ifelse(Date > Sys.Date(), 
+                       format(Date, "19%y-%m-%d"), format(Date)))
+head(Date, ROWS)
+```
+
+Check from the summary and plot that everything seems to be correct. 
+
+```{r date summary}
+summary(Date) 
+```
+
+```{r date plot}
+fig <- plot_ly(x = Date, type = "histogram")
+fig
+```
+
+There actually was a pause in testing during 1959-60 caused by bilateral moratorium between the USSR and the US. This gives evidence that the graph is correct. For more details see for example https://en.wikipedia.org/wiki/Partial_Nuclear_Test_Ban_Treaty#Khrushchev_and_a_moratorium:_1958%E2%80%931961. 
+
+### Testing party 
+
+The options are: 
+
+* CP = USSR
+* FR = France
+* GB = UK
+* IN = India
+* IS = Israel, but the 790922 event in 22th in 1979 is only putative
+* PC = People's Republic of China
+* US = United States 
+
+Testing party uses characters from 17th to 18th in the data row.
+
+```{r get tester}
+TestParty <- substr(dataRaw$data,17,18) 
+
+# remove leading and trailing whitespaces  
+TestParty <- trimws(TestParty)
+# set empty values to NaNs
+TestParty[TestParty == ""] <- NA 
+# Replace suspicious values, misspellings etc with good guesses
+TestParty[TestParty == "YS"] <- "US" #Confirmed from the data
+# create factors 
+TestParty <- factor(TestParty)
+
+head(TestParty, ROWS)
+```
+
+Same dataset with more readable descriptions. These can be used in plots to get better labels. 
+
+```{r tester description}
+# Copy TestParty as basis 
+TestParty_Descr <- TestParty
+# Rename factors 
+levels(TestParty_Descr) <- c("Soviet Union", "France", "United Kingdom", "India", "Israel (Putative)", "China", "United States") 
+```
+
+Check from the summary and plot that everything is fine. 
+
+```{r tester summary}
+summary(TestParty) 
+```
+
+```{r tester plot}
+fig <- plot_ly(x = TestParty, type = "histogram")
+fig
+```
+
+### Test site 
+
+Test or explosion site, 43 different. Note that the UK Christmas Island site has been used for some US atmospheric tests. In exchange, the US has allowed the UK to conduct underground tests at the Nevada Test Site.
+
+* AMC = Amchitka Island, Aleutians, Alaska, USA (US underground tests)
+* ANM = Alamogordo, New Mexico, USA (US atmospheric test)
+* BKN = Bikini (US atmospheric tests)
+* CHR = Christmas Island (UK and US atmospheric tests)
+* CLS = Carlsbad, New Mexico, USA (US underground test)
+* CNV = Centra Nevada (US underground test)
+* ECK = Ecker, Algeria (French Underground tests)
+* EMU = Emu Field, 480 kilometers SW of Woomera, Australia (UK atmospheric tests)
+* ENW = Enwetak (US atmospheric tests)
+* FAL = Fallon, Nevada, USA (US underground test)
+* FAN = Fangataufa Is. (French atmospheric and underground tests)
+* FMT = Farmington, Colorado (US underground natural gas stimulation test)
+* GRV = Grand Valley, Colorado, USA (US natural gas stimulation)
+* HRJ = Hiroshima, Japan (US/warfare)
+* HTB = Hattiesburg, Mississippi, USA (US underground tests)
+* IS?IN = Indian Ocean (putative Israeli Test)
+* JON = Johnston Island (US atmospheric tests)
+* KPY = Kapustin Yar (USSR)
+* KTS = Eastern Kazakh or Semipalitinsk test site, USSR (USSR atmospheric and underground tests)
+* KTSB = KTS Balapan or Shagan River
+* KTSD = KTS Degelen Mountain
+* KTSM = KTS Murzhik
+* LNR = Lop Nor, PRC (PRC atmospheric and underground tests)
+* MAL = Malden Island (UK atmospheric tests) (My note: no events marked with this tag)
+* MAR = Maralinga, Australia (UK atmospheric tests)
+* MBI = Monte Bello Islands, Australia (UK atmospheric test)
+* MUR = Muruora Is. (French atmospheric and underground tests)
+* NGJ = Nagasaki, Japan (US/warfare)
+* NTS = Nevada Test Site, Nevada, USA (US atmospheric and underground and UK underground tests)
+* NTSB = NTS Buckboard Mesa
+* NTSF = NTS Frenchman Flat
+* NTSP = NTS Pahute Mesa
+* NTSY = NTS Yucca Mountain
+* NZ = Novaya Zemlya, USSR (USSR atmospheric and underground tests)
+* NZN = NZ Northern Island (My note: no events marked with this tag)
+* NZS = NZ Southern Island (My note: no events marked with this tag)
+* PAC = Various Pacific Ocean sites
+* RAJ = Rajasthan Desert, India (Indian underground test)
+* REG = Reggane Proving Grounds, Algeria (French Atmospheric Tests)
+* RFL = Rifle, Colorado, USA (3x33kt simultaneous gas stimulation shots)
+* SAT = South Atlantic Ocean (three US tests, rocket to 482 kilometers altitude)
+* SYS = Sary Shagan (USSR)
+* YAK = Yakutia (USSR) (Note, my addition; this label is used in the dataset, but not explained.)
+
+USSR sites other than NZ and KTS. A large number of blasts, some or many of which were for engineering purposes (possibly similar to US Plowshare tests) were fired underground at many locations. Latitude and Longitude for most of these are given in the tables. These tests, US plowshare tests, and the one Indian test, were announced by the testing parties to be PNEs (Peaceful Nuclear Explosions).
+
+Site uses characters from 19th to 21st in the data row.
+
+```{r get site}
+Site <- substr(dataRaw$data,19,22) 
+# remove leading and trailing whitespaces  
+Site <- trimws(Site)
+# set empty values to NaNs
+Site[Site == ""] <- NA 
+# Replace suspicious values, misspellings etc with good guesses
+Site[Site == "?IN"] <- "IS?IN"  # only one data point
+Site[Site == "NTS?"] <- "NTS"   # simplify, only one data point 
+Site[Site == "NSTY"] <- "NTSY"  # misspelling
+Site[Site == "NTSR"] <- "NTS"   # missspelling, could be NTSP 
+Site[Site == "KTSK"] <- "KTS"   # misspelling, could be KTSM
+# create factors 
+Site <- factor(Site)
+head(Site,ROWS) 
+```
+
+Same data with more readable descriptions. 
+
+```{r site description}
+# Copy TestParty as basis 
+Site_Descr <- Site
+# Rename factors 
+levels(Site_Descr) <- c("Amchitka Island, Aleutians, Alaska", "Alamogordo, New Mexico", "Bikini Atoll, Marshall Islands", "Christmas Island", "Carlsbad, New Mexico", "Centra Nevada", "Ecker, Algeria", "Emu Field, Australia", "Enewetak Atoll, Marshall Islands", "Fallon, Nevada", "Fangataufa Atoll", "Farmington, Colorado", "Grand Valley, Colorado", "Hiroshima, Japan", "Hattiesburg, Mississippi", "Indian Ocean (putative Israeli Test)", "Johnston Atoll", "Kapustin Yar", "Eastern Kazakh or Semipalitinsk test site", "Eastern Kazakh, Balapan or Shagan River", "Eastern Kazakh, Degelen Mountain", "Eastern Kazakh, Murzhik", "Lop Nor, China", "Maralinga, Australia", "Monte Bello Islands, Australia", "Muruora, French Polynesia", "Nagasaki, Japan", "Nevada Test Site, Nevada", "Nevada Test Site, Buckboard Mesa", "Nevada Test Site, Frenchman Flat", "Nevada Test Site, Pahute Mesa", "Nevada Test Site, Yucca Mountain", "Novaya Zemlya, Russia", "Various Pacific Ocean sites", "Rajasthan Desert, India", "Reggane Proving Grounds, Algeria", "Rifle, Colorado", "South Atlantic Ocean", "Sary Shagan, Russia", "Yakutia, Russia") 
+
+#levels(Site_Descr)
+```
+
+Print summary and plot. 
+
+```{r site summary}
+summary(Site) 
+```
+
+```{r site plot}
+fig <- plot_ly(x = Site, type = "histogram")
+fig
+```
+
+### Test type 
+
+There are 16 different types: 
+
+* AIRD = airdrop
+* ART  = artillery shell
+* ATMO = in or above the atmosphere
+* BALN = balloon
+* BARG = barge
+* CRAT = crater
+* RC   = "roman candle" = open vertical shaft
+* ROCK = rocket
+* SHFT = stemmed vertical shaft
+* SS1 = simultaneous shot in shaft 1
+* SS2 = simultaneous shot in shaft 2
+* SSn = simultaneous shot in shaft n  (If several simultaneous tests were in the same shaft [usually at different depths] they will all be listed SS1. If three were shot simultaneously in three separate shafts they will be SS1, SS2, and SS3).
+* SURF = surface (unknown but probably not airdropped, near surface, includes tower and barge)
+* TOWR = tower
+* TUNN = tunnel
+* UNDG = underground (My note: Addition, missed from explanations)
+* UNDW = underwater
+
+Test type uses characters from 23rd to 27th in the data row.
+
+```{r get testtype}
+TestType <- substr(dataRaw$data,23,27) 
+# remove leading and trailing whitespaces  
+TestType <- trimws(TestType)
+
+#Replace suspicious values, misspellings etc with good guesses
+TestType[TestType == "AIRB"] <- "AIRD" # misspelling, one case only
+TestType[TestType == "ATM0"] <- "ATMO" # misspelling, one case only 
+TestType[TestType == "SS4"] <- "SSN"   # to simplify
+TestType[TestType == "SS5"] <- "SSN"   # to simplify
+TestType[TestType == "SS6"] <- "SSN"   # to simplify 
+TestType[TestType == "SUR?"] <- "SURF" # to simplify, one case only 
+TestType[TestType == "TUN1"] <- "TUNN" # to simplify, two cases  
+TestType[TestType == "SHIP"] <- "BARG" # guessing, one case only 
+TestType[TestType == "MINE"] <- "UNDG" # guessing, one case only 
+# set empty values to NaNs
+TestType[TestType == ""] <- NA  
+# create factors 
+TestType <- factor(TestType)
+head(TestType,ROWS)
+```
+
+Same data with more readable descriptions. 
+
+```{r testtype description}
+# Copy TestType as basis 
+TestType_Descr <- TestType
+
+# Rename factors 
+levels(TestType_Descr) <- c("Airdrop", "Artillery Shell", "Atmosphere", "Balloon", "Barge", "Crater",  "Open Vertical Shaft", "Rocket", "Shaft?", "Stemmed Vertical Shaft", "Simultaneous Shot in Shaft 1", "Simultaneous Shot in Shaft 2","Simultaneous Shot in Shaft 3", "Simultaneous Shot in Shaft N", "Surface", "Tower", "Tunnel", "Underground", "Underwater")
+
+#levels(TestType_Descr)
+```
+
+Print summary: 
+
+```{r testtype summary}
+summary(TestType) 
+```
+
+<!--
+TBD: For some reason, plotting this freezes the whole system
+ ```{r testtype plot}
+# fig <- plot_ly(x = TestType, type = "histogram")
+# fig
+ ```
+-->
+
+### Seismic body (P) wave magnitude 
+
+Unit of magnitude is mb. Characters from 29th to 31st in the data row. 
+
+```{r get seismic}
+SeismBody <- substr(dataRaw$data,29,31) 
+# remove leading and trailing whitespaces  
+SeismBody <- trimws(SeismBody)
+# set to numeric 
+SeismBody <- as.numeric(as.character(SeismBody)) 
+
+tail(SeismBody,ROWS)
+```
+
+Check from the summary and plot that everything is as it should. 
+
+```{r seismic summary}
+summary(SeismBody)
+```
+
+```{r seismic plot}
+#plot(Date, SeismBody)
+fig <- plot_ly(x = SeismBody, type = "histogram")
+fig
+```
+
+### Explosive Yield 
+
+Unit of yield is kilotons. Characters from 37th to 41st in the data row.
+
+```{r get yield}
+Yield_orig <- substr(dataRaw$data,33,41) 
+# remove leading and trailing whitespaces  
+Yield_orig <- trimws(Yield_orig)
+# set empty values to NaNs
+Yield_orig[Yield_orig == ""] <- NA  
+# create factors 
+#Yield <- factor(Yield)
+head(Yield_orig,ROWS)
+```
+
+Not all yield are exact, so using categories is more useful. 
+
+```{r yield category}
+Yield <- substr(dataRaw$data,33,41) 
+Yield <- as.numeric(Yield)
+head(Yield_orig,ROWS)
+```
+
+
+Print summary and plot. 
+
+```{r yield summary}
+summary(Yield)
+```
+
+```{r yield plot}
+#plot(Date, Yield) # log="y"
+fig <- plot_ly(x = Yield, type = "histogram")
+fig
+```
+
+### Latitude (N/S)  
+
+Latitude in degrees and decimals of a degree. 'N' for northern and 'S' for southern latitudes. Latitude uses characters from 43th to 49th in the data row.
+
+```{r get latitude}
+Lat <- substr(dataRaw$data,43,49) 
+# remove spaces
+Lat <- gsub(" ", "", Lat)
+# extract N/S
+LatNS <- substr(Lat,nchar(Lat),nchar(Lat)) 
+# remove N/S from the end
+Lat <- gsub("[A-Za-z]$","",Lat)
+# change to numeric
+Lat <- as.numeric(as.character(Lat)) 
+#Change latitude to use signs and not N/S
+Lat <- ifelse(LatNS=="N", Lat, -Lat)
+# correcting event locations 
+Lat[Lat > 19.9 & Lat < 20.1] <- -20 # to correct part of Pacific Ocean
+
+head(Lat,ROWS)
+```
+
+Print summary and plot.  
+
+```{r latitude summary}
+summary(Lat)
+```
+
+```{r latitude plot}
+#hist(Lat,20)
+fig <- plot_ly(x = Lat, type = "histogram")
+fig
+```
+
+We can see that lots of locations are missing latitude and longitude information. This can be fixed using approximative information based on test site. This is done later after all the data has been collected to a dataframe. 
+
+### Longitude (E/W)
+
+Longitude in degrees and decimals of a degree. 'E' for eastern and 'W' for western longitudes. Longitude uses characters from 51st to 58th in the data row.
+
+```{r get longitude}
+Lng <- substr(dataRaw$data,51,58)
+#remove spaces
+Lng <- gsub(" ", "", Lng) 
+# extract E/W
+LngEW <- substr(Lng,nchar(Lng),nchar(Lng)) 
+# remove E/W from the end
+Lng <- gsub("[A-Za-z]$","",Lng) 
+# change to numerig
+Lng <- as.numeric(as.character(Lng)) 
+# Change longitude to use signs and not E/W
+Lng <- ifelse(LngEW=="E", Lng, -Lng) 
+# correcting event locations 
+Lng[Lng > -166.07 & Lng < -166.06] <- -116.066 # from Pacific Ocean to Nevada
+Lng[Lng > -88.87 & Lng < -88.85] <- 88.86 # From US to China
+Lng[Lng > -40.1 & Lng < -39.9] <- -140    # From coas of Brazil to Pacific Ocean  
+Lng[Lng > -38.9 & Lng < -38.8] <- -138.84 # From coas of Brazil to Pacific Ocean
+
+head(Lng,ROWS)
+```
+
+Check from the summary and plot that everything is correct. 
+
+```{r longitude summary}
+summary(Lng)
+```
+
+```{r longitude plot}
+#hist(Lng,20)
+fig <- plot_ly(x = Lng, type = "histogram")
+fig
+```
+
+### Purpose
+
+Purpose of the test.
+
+* WR = weapons related
+* ** = war
+* WE = weapons effects
+* SF = safety
+* PS = Plowshare (US PNE engineering shots)
+* VU = US Vela Uniform-directed toward seismic detection of underground shots
+
+Purpose uses characters from 60th to 61st in the data row.
+
+```{r get purpose}
+Purpose <- substr(dataRaw$data,60,61) 
+
+# remove leading and trailing whitespaces  
+Purpose <- trimws(Purpose)
+# set empty values to NaNs
+Purpose[Purpose == ""] <- NA  
+# Replace suspicious values, misspellings etc with good guesses or NaNs
+Purpose[Purpose == "??"] <- NA
+Purpose[Purpose == "PN"] <- "PS"  # PN probably mixed with PS, combine these
+Purpose[Purpose == "US"] <- "PS" # misspelling probably, one case only 
+Purpose[Purpose == "W"]  <- "WR"  # two cases, could also be WE but WR more common
+# create factors 
+Purpose <- factor(Purpose)
+
+head(Purpose,ROWS)
+```
+
+Same data with more readable descriptions. 
+
+```{r purpose description}
+# Copy TestType as basis 
+Purpose_Descr <- Purpose
+# Rename factors 
+levels(Purpose_Descr) <- c("War", "Peaceful (engineering)", "Safety",  "Seismic detection",  "Weapons effects", "Weapons related")
+
+levels(Purpose_Descr)
+```
+
+Check from the summary and plot that everything is as it should. 
+
+```{r purpose summary}
+# create factors 
+Purpose <- factor(Purpose)
+# print summary
+summary(Purpose)
+```
+
+```{r purpose plot}
+fig <- plot_ly(x = Purpose, type = "histogram")
+fig
+```
+
+### Device Type 
+
+Type of the devise.
+
+* U = fission only with primarialy U235, or boosted or two stage with primarialy U235 primary (trigger, pit)
+* P = fission only with primarialy Pu239, or boosted or two stage with primarialy Pu239 primary (trigger, pit)
+* I = fission only, fission material mix unknown
+* B = "boosted", some fusion yield, perhaps from tritium although the boost is probably mainly to increase the fission yield.
+* 2 = two stage, fusion second stage, possibly many or most of these will have a U238 fission "third" stage.
+
+Device type uses characters from 62nd to 63rd in the data row.
+
+```{r get device}
+Device <- substr(dataRaw$data,62,63)  
+
+# remove leading and trailing whitespaces  
+Device <- trimws(Device)
+# set empty values to NaNs
+Device[Device == ""] <- NA 
+# simplify
+Device[Device == "E"] <- NA   # E' is a 'ghost' from purpose = PNE
+Device[Device == "C"] <- NA   # difficult to say what this should be, one case only
+Device[Device == "R"] <- NA   # difficult to say what this should be, two cases 
+Device[Device == "-U"] <- NA  # Comes from remark US-UK, one case
+#Device[Device == "1"] <- "I"  # ?????
+Device[Device == "PB"] <- "B" # simplify, two cases  
+Device[Device == "UB"] <- "B" # simplify, one case 
+Device[Device == "U2"] <- "2" # simplify, one case 
+# create factors 
+Device <- factor(Device)
+head(Device,ROWS)
+```
+
+Same data with more readable descriptions. 
+
+```{r device description}
+# Copy TestType as basis 
+Device_Descr <- Device
+# Rename factors 
+levels(Device_Descr) <- c("Fusion", "Boosted (some fusion)", "Fission", "Primarly Pu239", "Primarly U235")
+
+levels(Device_Descr)
+```
+
+Print summary. 
+
+```{r device summary}
+summary(Device)
+```
+
+```{r device plot}
+fig <- plot_ly(x = Device, type = "histogram")
+fig
+```
+
+### Name 
+
+Name of explosion. All US announced, and a few French, and all UK underground tests have a name. In early US atmospheric testing some names were reused. When the names are too long for the table, any space is first dropped, and second, the name is truncated, not abbreviated. A few words appear often enough as the component of a name that they are abberviated by a lower case letter as follows:
+
+* g = GERBOISE
+* m = MIST
+* y = MISTY
+* p = PRIME
+* d = DIAMOND
+
+A "\*" in the first column of the name indicates a putative nuclear test (ie. not announced or acknowledged by the presumed testing party). A second "\*" in the name column indicates some doubt about wheither the event was a nuclear explosion. A number of US tests listed only by N (NRDC), which have "\*\*" in the name column, may be cavity collapses from previous tests, or earthquakes, but they may include some unannounced nuclear explosions.
+
+```{r get name}
+Name <- substr(dataRaw$data,69,76)
+# remove leading and trailing whitespaces  
+Name <- trimws(Name)
+# set empty values to NaNs
+Name[Name == ""] <- NA 
+# set full names as described above
+Name<-gsub("g", "GERBOISE", Name)
+Name<-gsub("m", "MIST", Name)
+Name<-gsub("y", "MISTY", Name)
+Name<-gsub("p", "PRIME", Name)
+Name<-gsub("d", "DIAMOND", Name)
+
+tail(Name,ROWS)
+```
+
+Print summary. 
+
+```{r name summary}
+summary(Name)
+```
+
+## Data to dataframe
+
+Combine all of the data to new dataframe. 
+
+```{r form dataframe}
+df_data <- data.frame(Date, TestParty, TestParty_Descr, Site, Site_Descr, TestType, TestType_Descr,  SeismBody, Yield, Lat, Lng, Purpose, Purpose_Descr, Device, Device_Descr, Name)
+head(df_data, ROWS/2)
+```
+
+Check datatypes. 
+
+```{r check types}
+sapply(df_data, class) 
+```
+
+### Replace NaNs in latitude and longitude 
+
+To replace missing longitude and latitude information, find mean values for latitude and longitude for each test site.   
+
+```{r get lat avgs}
+LatAvgs <- with(df_data, tapply(Lat, Site, mean, na.rm = TRUE)) 
+LatAvgs
+```
+
+```{r get lng avgs}
+LngAvgs <- with(df_data, tapply(Lng, Site, mean, na.rm = TRUE)) 
+LngAvgs
+```
+
+Replace missing latitudes and longitudes in each site with averages above: 
+
+```{r replace lat avgs}
+
+for (i in c(1:nrow(LatAvgs)) ) 
+{
+  # finding site 
+  ind_loc <- df_data$Site == names(LatAvgs[i, drop = FALSE])
+  # replacing NaN indexes with false 
+  ind_loc[is.na(ind_loc)] <- FALSE      
+  # finding where latitude is NaN
+  ind_nan <- is.na(df_data$Lat)                                  
+  # finding indexes where both are true
+  ind  <- ifelse(ind_loc == TRUE & ind_nan == TRUE, TRUE, FALSE)
+  # replacing missing latitude with average + small random element 
+  df_data$Lat[ind] <- LatAvgs[[i]] + rnorm(1, mean=0, sd=0.1)              
+}
+```
+
+Small random element in location is used to better distinguish location on map. 
+
+```{r replace lng avgs}
+
+for (i in c(1:nrow(LngAvgs)) ) 
+{
+  # finding site
+  ind_loc <- df_data$Site == names(LngAvgs[i, drop = FALSE])
+  # replacing NaN indexes with false 
+  ind_loc[is.na(ind_loc)] <- FALSE 
+  # finding where longitude is NaN
+  ind_nan <- is.na(df_data$Lng) 
+  # finding indexes where both are true
+  ind  <- ifelse(ind_loc == TRUE & ind_nan == TRUE, TRUE, FALSE)
+  # replacing missing longitude with average + small random element 
+  df_data$Lng[ind] <- LngAvgs[[i]] + rnorm(1, mean=0, sd=0.1)
+}
+```
+
+As we can se from the summary below, these replacement grately reduce the number of NaN values in latitude and longitude - from 942 NaN values to only 119 NaNs. 
+
+## Summary 
+
+Print summary for all data to check everything is fine. 
+
+```{r data summary}
+summary(df_data)
+```
+
+## Save cleaned data 
+
+Save cleaned dataset to be used for visualizations. 
+
+```{r save data}
+write.csv(df_data, "nuclearweapondata_cleaned.csv")
+```

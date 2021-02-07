@@ -1,0 +1,202 @@
+---
+title: "Nuclear Weapon Tests Data Visualization"
+author: "Mariaana Talus"
+date: "`r format(Sys.time(), '%d.%m.%Y')`" #today 
+output: html_document 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Nuclear Weapon Tests - Data Visualization
+
+The goal is to present nuclear weapon test data on a map. But first, an extensive data cleaning was needed, see document NuclearWeaponTests_Cleaning.Rmd. Together with the map, different plots are presented to present differences and similarities between tests by different testing parties. 
+
+## Import libraries and set constants 
+
+Import libraries
+```{r import libraries, message=FALSE}
+#install.packages("plotly")  # needed only if plotly has not been installed already
+library(plotly)
+library(ggplot2)
+library(dplyr)
+```
+
+Set some constants for the number of rows shown in tables.
+```{r set constants}
+ROWS = 30 # how many data rows are displayed 
+```
+
+## Reading in data
+
+Reading in data. Data is downloaded from http://nuclearweaponarchive.org/Library/Catalog, and it has been saved as nuclearweapondata.txt. Updated version can be found from https://www.batguano.com/nuclear/nuccatalog.html. 
+
+```{r read in data}
+df_data <- read.csv("nuclearweapondata_cleaned.csv")
+```
+
+
+The following data is presented in the file: 
+
+* Index
+* Date
+* Test Party
+* Test Party Description
+* Site
+* Site Description
+* Test Type
+* Test Type Description
+* Seismic Body
+* Yield
+* Latitude
+* Longitude
+* Purpose
+* Purpose Description
+* Device
+* Device Description
+* Name
+
+A glipse of the data to confirm everything looks normal: 
+
+```{r preview data}
+head(df_data, 10) 
+```
+
+## Modify time for plots 
+
+Change date to POSIXct format and add a year column
+```{r data date}
+df_data$Date <- as.POSIXct(df_data$Date)
+df_data$Year <- format(df_data$Date,"%Y")
+head(df_data$Year, 10) 
+```
+
+# Create Plots
+
+## Test Locations on Map 
+
+Create text to show when hovering on map. 
+
+```{r map hovertext}
+df_data$hover <- with(df_data, paste("Test Site:", Site_Descr, "<br>", "Date:", Date, '<br>', 
+                                     "Test party:", TestParty_Descr, "<br>", "Name:", Name, '<br>', 
+                                     "Device:", Device_Descr, "<br>", "Yield:", Yield, "<br>",
+                                     "Purpose:", Purpose_Descr, "<br>", "Type:", TestType_Descr
+                                      ))
+```
+
+Print map: 
+
+```{r plot map}
+g <- list( # define map elements  
+  showland = TRUE,
+  landcolor = "White",
+  showocean = TRUE,
+  oceancolor = "LightBlue",
+  showlakes = TRUE,
+  lakecolor = "LightBlue",
+  showrivers = TRUE,
+  rivercolor = "LightBlue",
+  showcountries = TRUE,
+  countrycolor = "DarkGray",
+  resolution = 50,
+  projection = list( type = 'natural earth')
+)
+# define data shown on map 
+fig <- plot_geo(df_data, lat = ~Lat, lon = ~Lng)
+fig <- fig %>% add_markers(text = df_data$hover, 
+                           color = df_data$TestParty_Descr,
+                           size = I(25))
+# define layout 
+fig <- fig %>% layout(
+    title = 'Nuclear tests', 
+    geo = g
+  )
+fig
+```
+
+Note that most locations on the map are approximate.  
+
+## Tests by Testing Party
+
+Get frequencies for the plot;  Get number of tests by testing party 
+
+```{r count total events}
+totCounts <- data.frame(df_data %>% group_by(TestParty_Descr) %>% summarise(NoEvents = n()))
+totCounts <- na.omit(totCounts) # remove NaNs
+totCounts
+```
+
+Create plot
+
+```{r plot tot amounts}
+fig <- plot_ly(totCounts, labels = ~TestParty_Descr, values = ~NoEvents, type = 'pie', 
+               textinfo = "percent", hoverinfo = 'text', textposition = 'inside', 
+               text = ~paste(TestParty_Descr, ': ', NoEvents))
+fig <- fig %>% layout(title = 'Nuclear Tests by Testing Party')
+fig
+```
+
+## Tests by Year and Testing Party
+
+Get frequencies for the plot; Get tests by year and testing party. 
+
+```{r count yearly events}
+eventCounts <- data.frame(df_data %>% group_by(Year,TestParty_Descr) %>% summarise(NoEvents = n()))
+head(eventCounts, 10)
+```
+
+Create plot
+
+```{r plot dates}
+p <- ggplot(eventCounts, aes(fill=TestParty_Descr, y=NoEvents, x=Year)) + 
+     geom_bar(position="stack", stat="identity", width = 0.9) + 
+     theme(legend.title = element_blank())
+fig <- ggplotly(p)
+fig <- fig %>% layout(title = 'Number of Nuclear Tests Yearly',
+                      xaxis = list(tickangle = 90, title = ""),
+                      yaxis = list(title = ""))
+fig
+```
+
+## Test Types by Testing Party
+
+Get tests by device type and testing party  
+```{r count test types}
+df_testTypes <- data.frame(df_data %>% group_by(TestType_Descr,TestParty_Descr) %>% summarise(noTestTypes = n()))
+head(df_testTypes, 10)
+```
+
+Create plot 
+
+```{r plot test types}
+p <- ggplot(df_testTypes, aes(fill=TestParty_Descr, y=noTestTypes, x=TestType_Descr)) + 
+     geom_bar(position="stack", stat="identity", width = 0.9) +
+     theme(legend.title = element_blank())
+fig <- ggplotly(p)
+fig <- fig %>% layout(title = 'Number of Tests by Type and Testing Party',
+                      xaxis = list(tickangle = 45,title = ""),  
+                      yaxis = list(title = ""))
+fig
+```
+
+## Test Purposes by Testing Party
+
+Get tests by device type and testing party  
+```{r count purpose}
+df_purposes <- data.frame(df_data %>% group_by(Purpose_Descr,TestParty_Descr) %>% summarise(noPurposes = n()))
+head(df_purposes, 10)
+```
+
+Create plot 
+
+```{r plot purpose}
+p <- ggplot(df_purposes, aes(fill=TestParty_Descr, y=noPurposes, x=Purpose_Descr)) + 
+     geom_bar(position="stack", stat="identity", width = 0.9) +
+     theme(legend.title = element_blank())
+fig <- ggplotly(p)
+fig <- fig %>% layout(title = 'Number of Tests by Purpose and Testing Party',
+                      xaxis = list(tickangle = 45, title = ""),
+                      yaxis = list(title = ""))
+fig
+```
